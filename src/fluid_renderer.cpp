@@ -8,13 +8,13 @@
 #include "shaders.h"
 #include "vector_operators.h"
 
-fluid_sandbox_renderer::fluid_sandbox_renderer(fluid_solver* solver) : solver_(solver)
+fluid_renderer::fluid_renderer(fluid_solver* solver) : solver_(solver)
 {
     solver_->set_renderer(this);
     render_velocity_ = true;
 }
 
-fluid_sandbox_renderer::~fluid_sandbox_renderer()
+fluid_renderer::~fluid_renderer()
 {
     glDeleteProgram(render_density_program_.program);
     glDeleteProgram(render_velocity_program_.program);
@@ -25,7 +25,7 @@ fluid_sandbox_renderer::~fluid_sandbox_renderer()
     glDeleteTextures(2, textures);
 }
 
-void fluid_sandbox_renderer::initialize(GLFWwindow* window)
+void fluid_renderer::initialize(GLFWwindow* window)
 {
     cuda_check(cudaSetDevice(0), "cudaSetDevice");
     glClearColor(0, 0, 0, 1);
@@ -33,10 +33,7 @@ void fluid_sandbox_renderer::initialize(GLFWwindow* window)
     create_data_textures();
 
     render_density_program_ = create_render_program(quad_vs, render_density_fs);
-    set_program_uniforms(render_density_program_, false);
-
     render_velocity_program_ = create_render_program(render_velocity_vs, render_velocity_fs);
-    set_program_uniforms(render_velocity_program_, true);
 
     create_vao();
 
@@ -44,7 +41,7 @@ void fluid_sandbox_renderer::initialize(GLFWwindow* window)
     update_title(window);
 }
 
-int2 fluid_sandbox_renderer::grid_position(const double2& mouse_position) const
+int2 fluid_renderer::grid_position(const double2& mouse_position) const
 {
     const auto fbs = framebuffer_size();
     const auto gs = get_config().n;
@@ -54,15 +51,16 @@ int2 fluid_sandbox_renderer::grid_position(const double2& mouse_position) const
     };
 }
 
-fluid_sandbox_config fluid_sandbox_renderer::get_config() const
+fluid_sandbox_config fluid_renderer::get_config() const
 {
     return solver_->config;
 }
 
-void fluid_sandbox_renderer::render(GLFWwindow* window, const render_state& render_state)
+void fluid_renderer::render(GLFWwindow* window, const render_state& render_state)
 {
     solver_->solve();
-
+    
+    glViewport(0, 0, framebuffer_size().x, framebuffer_size().y);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glBindVertexArray(vao_);
     glActiveTexture(GL_TEXTURE0);
@@ -88,7 +86,7 @@ void fluid_sandbox_renderer::render(GLFWwindow* window, const render_state& rend
     glBindVertexArray(0);
 }
 
-void fluid_sandbox_renderer::handle_key_event(GLFWwindow* window, int key, int scancode, int action, int mods)
+void fluid_renderer::handle_key_event(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
     if (key == GLFW_KEY_SPACE && action == GLFW_PRESS)
     {
@@ -98,7 +96,7 @@ void fluid_sandbox_renderer::handle_key_event(GLFWwindow* window, int key, int s
     base_renderer::handle_key_event(window, key, scancode, action, mods);
 }
 
-void fluid_sandbox_renderer::handle_mouse_button_event(GLFWwindow* window, const int button, const int action,
+void fluid_renderer::handle_mouse_button_event(GLFWwindow* window, const int button, const int action,
                                                        const int mods)
 {
     if (action == GLFW_PRESS) mouse_pressed_buttons_ |= 1 << button;
@@ -112,18 +110,18 @@ void fluid_sandbox_renderer::handle_mouse_button_event(GLFWwindow* window, const
     base_renderer::handle_mouse_button_event(window, button, action, mods);
 }
 
-void fluid_sandbox_renderer::handle_cursor_enter_event(GLFWwindow* window, int entered)
+void fluid_renderer::handle_cursor_enter_event(GLFWwindow* window, int entered)
 {
     cursor_hover_ = entered;
     base_renderer::handle_cursor_enter_event(window, entered);
 }
 
-bool fluid_sandbox_renderer::is_mouse_button_pressed(int button) const
+bool fluid_renderer::is_mouse_button_pressed(int button) const
 {
     return mouse_pressed_buttons_ & 1 << button;
 }
 
-void fluid_sandbox_renderer::handle_cursor_pos_event(GLFWwindow* window, double xpos, double ypos)
+void fluid_renderer::handle_cursor_pos_event(GLFWwindow* window, double xpos, double ypos)
 {
     if (!cursor_hover_)
     {
@@ -137,7 +135,7 @@ void fluid_sandbox_renderer::handle_cursor_pos_event(GLFWwindow* window, double 
         const auto force = get_config().force;
         const auto movement = float2{
             static_cast<float>(mouse_pos_.x - last_mouse_pos_.x),
-            static_cast<float>(mouse_pos_.y - last_mouse_pos_.y)
+            static_cast<float>(last_mouse_pos_.y - mouse_pos_.y)
         };
         if (!is_zero(movement))
         {
@@ -156,36 +154,35 @@ void fluid_sandbox_renderer::handle_cursor_pos_event(GLFWwindow* window, double 
     base_renderer::handle_cursor_pos_event(window, xpos, ypos);
 }
 
-render_program fluid_sandbox_renderer::create_render_program(const char* vs, const char* fs)
+render_program fluid_renderer::create_render_program(const char* vs, const char* fs) const
 {
     GLuint program = create_program(vs, fs);
-    return {
+    const render_program rp = {
         .program = program,
         .size = glGetUniformLocation(program, "size"),
         .u_texture = glGetUniformLocation(program, "u_texture")
     };
+    set_program_uniforms(rp);
+    return rp;
 }
 
-void fluid_sandbox_renderer::set_program_uniforms(const render_program& rp, const bool velocity) const
+void fluid_renderer::set_program_uniforms(const render_program& rp) const
 {
     glUseProgram(rp.program);
     glUniform1i(rp.u_texture, 0);
     auto [x, y] = solver_->config.n;
-    if (velocity)
-        glUniform2i(rp.size, x, y);
-    else
-        glUniform2f(rp.size, static_cast<float>(x), static_cast<float>(y));
+    glUniform2i(rp.size, x, y);
     glUseProgram(0);
 }
 
-void fluid_sandbox_renderer::update_title(GLFWwindow* window) const
+void fluid_renderer::update_title(GLFWwindow* window) const
 {
     char title[64];
     (void)sprintf_s(title, 64, "fluid sandbox (%s)", render_velocity_ ? "velocity" : "density");
     glfwSetWindowTitle(window, title);
 }
 
-void fluid_sandbox_renderer::create_vao()
+void fluid_renderer::create_vao()
 {
     glGenVertexArrays(1, &vao_);
     glBindVertexArray(vao_);
@@ -193,7 +190,7 @@ void fluid_sandbox_renderer::create_vao()
     glBindVertexArray(0);
 }
 
-void fluid_sandbox_renderer::create_data_textures()
+void fluid_renderer::create_data_textures()
 {
     const auto s = solver_->get_grid_size();
     GLuint textures[2];

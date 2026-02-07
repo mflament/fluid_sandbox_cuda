@@ -10,7 +10,7 @@ struct render_program
     GLint u_texture;
 };
 
-class fluid_sandbox_renderer final : public base_renderer // NOLINT(cppcoreguidelines-special-member-functions)
+class fluid_renderer final : public base_renderer // NOLINT(cppcoreguidelines-special-member-functions)
 {
     GLuint vao_{};
     GLuint vel_texture_{};
@@ -30,9 +30,9 @@ class fluid_sandbox_renderer final : public base_renderer // NOLINT(cppcoreguide
 
     bool render_velocity_{};
 
-    static render_program create_render_program(const char* vs, const char* fs);
+    render_program create_render_program(const char* vs, const char* fs) const;
 
-    void set_program_uniforms(const render_program& rp, bool velocity) const;
+    void set_program_uniforms(const render_program& rp) const;
 
     void create_data_textures();
 
@@ -47,9 +47,9 @@ class fluid_sandbox_renderer final : public base_renderer // NOLINT(cppcoreguide
     [[nodiscard]] bool is_mouse_button_pressed(int button) const;
     
 public:
-    explicit fluid_sandbox_renderer(fluid_solver* solver);
+    explicit fluid_renderer(fluid_solver* solver);
 
-    ~fluid_sandbox_renderer() override;
+    ~fluid_renderer() override;
 
     void initialize(GLFWwindow* window) override;
 

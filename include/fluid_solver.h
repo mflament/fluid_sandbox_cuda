@@ -14,12 +14,12 @@ struct fluid_sandbox_config final
     float dt = 0.1f;
 };
 
-class fluid_sandbox_renderer;
+class fluid_renderer;
 
 class fluid_solver
 {
 protected:
-    const fluid_sandbox_renderer* renderer_{};
+    const fluid_renderer* renderer_{};
 
 public:
     fluid_sandbox_config config{};
@@ -28,7 +28,7 @@ public:
     {
     }
 
-    virtual void set_renderer(const fluid_sandbox_renderer* renderer);
+    virtual void set_renderer(const fluid_renderer* renderer);
 
     virtual ~fluid_solver() = default;
 
@@ -45,51 +45,14 @@ public:
     [[nodiscard]] int2 get_grid_size() const;
     
     [[nodiscard]] int get_pixel_count() const;
-};
-
-
-class cpp_fluid_solver final : public fluid_solver
-{
-    float *x_;
-    float *x0_;
-    float2 *uv_;
-    float2 *uv0_;
-
     
-    template <class T>
-    void add_source(T* v, const T* v0, float dt) const;
-    
-    void set_bnd(float2* v) const;
-    void set_bnd(float* v) const;
-    
-    template <class T>
-    void lin_solve(T* v, const T* v0, float a, float c) const;
-    
-    template <class T>
-    void diffuse(T* v, const T* v0, float diff, float dt) const;
-    float2 get_dest(int2 pos, const float2* uv, float2 dt0) const;
+    [[nodiscard]] int idx(const int x, const int y) const {
+        return x + (config.n.x + 2) * y;
+    }
 
-    template <class T>
-    void advect(T* x, const T* x0, const float2* uv) const;
+    [[nodiscard]] int idx(const int2 grid_pos) const
+    {
+        return idx(grid_pos.x, grid_pos.y);
+    }
 
-    void project(float2* uv, float2* p_div) const;
-    
-public:
-    explicit cpp_fluid_solver(const fluid_sandbox_config& cfg = {});
-
-    ~cpp_fluid_solver() override;
-
-    [[nodiscard]] inline int idx(int x, int y) const;
-
-    [[nodiscard]] inline int idx(int2 grid_pos) const;
-
-    void add_density(int2 grid_pos, float density) override;
-
-    void add_velocity(int2 grid_pos, float2 velocity) override;
-
-    void solve() override;
-
-    void update_velocity_texture(GLuint texture) override;
-
-    void update_density_texture(GLuint texture) override;
 };

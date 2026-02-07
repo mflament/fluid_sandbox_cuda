@@ -5,13 +5,11 @@
 
 base_renderer* render_loop::renderer_ = nullptr;
 
-void render_loop::start(base_renderer* renderer, const bool debug)
+void render_loop::start(base_renderer* renderer, const int width, const int height, const bool debug)
 {
     renderer_ = renderer;
-    const auto window = create_window(debug);
+    const auto window = create_window(width, height, debug);
 
-    int width, height;
-    glfwGetFramebufferSize(window, &width, &height);
     renderer->handle_size_event(window, width, height);
 
     renderer->initialize(window);
@@ -37,7 +35,7 @@ void render_loop::start(base_renderer* renderer, const bool debug)
     glfwTerminate();
 }
 
-GLFWwindow* render_loop::create_window(const bool debug)
+GLFWwindow* render_loop::create_window(const int width, const int height, const bool debug)
 {
     glfwInit();
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -46,7 +44,6 @@ GLFWwindow* render_loop::create_window(const bool debug)
     if (debug)
         glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, true);
 
-    int width = 800, height = 600;
     GLFWwindow* window = glfwCreateWindow(width, height, "fluid", nullptr, nullptr);
     if (window == nullptr)
     {

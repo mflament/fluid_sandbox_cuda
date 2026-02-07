@@ -60,7 +60,7 @@ find_package(CUDAToolkit REQUIRED)
 # Sources (VS filters)
 # --------------------------------------------------
 file(GLOB_RECURSE fluid_H include/*.h include/*.cuh) 
-file(GLOB_RECURSE fluid_SRC src/*.cpp src/*.cu)
+file(GLOB_RECURSE fluid_SRC src/*.cpp src/*.c src/*.cu)
 
 source_group("includes" FILES ${fluid_H})
 source_group("src" FILES ${fluid_SRC})

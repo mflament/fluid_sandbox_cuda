@@ -8,7 +8,7 @@ class render_loop final
 {
     static base_renderer* renderer_;
 
-    static GLFWwindow* create_window(bool debug);
+    static GLFWwindow* create_window(int width, int height, bool debug);
 
     static void framebuffer_size_callback(GLFWwindow* window, int w, int h);
 
@@ -26,5 +26,5 @@ class render_loop final
 public:
     [[nodiscard]] static base_renderer* get_renderer() { return renderer_; };
 
-    static void start(base_renderer* renderer, bool debug = false);
+    static void start(base_renderer* renderer, int width = 1024, int height = 768, bool debug = false);
 };
