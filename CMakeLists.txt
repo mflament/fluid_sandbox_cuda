@@ -55,6 +55,7 @@ FetchContent_MakeAvailable(glfw)
 find_package(CUDAToolkit REQUIRED)
 
 #add_compile_definitions(DIRECTINPUT_VERSION=0x0800)
+#add_compile_definitions(__CUDACC__)
 
 # --------------------------------------------------
 # Sources (VS filters)

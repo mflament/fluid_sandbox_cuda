@@ -1,18 +1,15 @@
 #include "fluid_solver.h"
 
-#include "vector_operators.h"
-
-void fluid_solver::set_renderer(const fluid_renderer* renderer)
+void fluid_solver::initialize(GLuint den_texture, GLuint u_texture, GLuint v_texture)
 {
-    renderer_ = renderer;
 }
 
-int2 fluid_solver::get_grid_size() const
+void fluid_solver::update_velocity_textures(GLuint uTexture, GLuint vTexture)
 {
-    return {config.n.x + 2, config.n.y + 2};
 }
 
 int fluid_solver::get_pixel_count() const
 {
-    return (config.n.x + 2) * (config.n.y + 2);
+    const int g = config.n + 2;
+    return g * g;
 }

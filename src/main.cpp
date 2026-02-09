@@ -2,15 +2,16 @@
 #include <iostream>
 #include <ostream>
 
-#include "cpp_fluid_solver.h"
 #include "original_fluid_solver.h"
+#include "cuda_fluid_solver.h"
 #include "fluid_renderer.h"
 #include "render_loop.h"
 
 int main()
 {
-    //const auto solver = new cpp_fluid_solver({.n = {1, 1}});
-    const auto solver = new original_fluid_solver({.n = {128, 128}});
+    constexpr fluid_solver_config cfg{.n = 128};
+    const auto original_solver = new original_fluid_solver(cfg);
+    const auto solver = new cuda_fluid_solver(cfg, original_solver);
     const auto fsr = new fluid_renderer(solver);
     try
     {
@@ -22,6 +23,7 @@ int main()
         throw e;
     }
     delete fsr;
+    delete original_solver;
     delete solver;
     return 0;
 }

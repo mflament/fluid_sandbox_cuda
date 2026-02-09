@@ -74,12 +74,11 @@ void set_texture_sampler_params(const GLuint texture, const GLint min_filter, co
                                 const GLint wrap_s, const GLint wrap_t)
 {
     glBindTexture(GL_TEXTURE_2D, texture);
-    set_texture_sampler_params(texture, min_filter, mag_filter, wrap_s, wrap_t);
+    set_texture_sampler_params(min_filter, mag_filter, wrap_s, wrap_t);
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void set_texture_sampler_params(const GLint min_filter, const GLint mag_filter,
-                                const GLint wrap_s, const GLint wrap_t)
+void set_texture_sampler_params(const GLint min_filter, const GLint mag_filter, const GLint wrap_s, const GLint wrap_t)
 {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
