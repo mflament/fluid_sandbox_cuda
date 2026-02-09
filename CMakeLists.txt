@@ -96,7 +96,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE include glad/include)
 # --------------------------------------------------
 set_target_properties(${PROJECT_NAME} PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
-    CUDA_ARCHITECTURES 120
+    CUDA_ARCHITECTURES native
 )
 
 # --------------------------------------------------
