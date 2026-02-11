@@ -74,10 +74,19 @@ set(GLAD_SRC
 
 source_group("GLAD" FILES ${GLAD_SRC})
 
+set(config_file config.cfg)
+
 # --------------------------------------------------
 # Executable
 # --------------------------------------------------
 add_executable(${PROJECT_NAME} ${fluid_H} ${fluid_SRC} ${GLAD_SRC})
+
+# --------------------------------------------------
+# Config file
+# --------------------------------------------------
+configure_file(config.cfg . COPYONLY)
+
+target_sources(${PROJECT_NAME} PRIVATE ${config_file})
 
 # --------------------------------------------------
 # Link libraries
