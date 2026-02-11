@@ -32,6 +32,11 @@ original_fluid_solver::~original_fluid_solver()
     delete v0_;
 }
 
+void original_fluid_solver::clear() const
+{
+    clear_sources();
+}
+
 void original_fluid_solver::add_density(int2 grid_pos, float density)
 {
     x0_[idx(grid_pos)] += density;
@@ -58,7 +63,8 @@ void original_fluid_solver::solve(const render_state& render_state)
     add_source(x_, x0_);
     diffuse(0, x0_, x_, config.diff);
     advect(0, x_, x0_, u_, v_);
-
+    
+    clear_sources();
 }
 
 void original_fluid_solver::clear_sources() const
@@ -143,14 +149,14 @@ void original_fluid_solver::project(float* u, float* v, float* p, float* div) co
     set_bnd(0, div);
     set_bnd(0, p);
 
-    // lin_solve(0, p, div, 1, 4);
+    lin_solve(0, p, div, 1, 4);
 
-    // FOR_EACH_CELL
-    //     u[IX(i, j)] -= 0.5f * static_cast<float>(N) * (p[IX(i+1, j)] - p[IX(i-1, j)]);
-    //     v[IX(i, j)] -= 0.5f * static_cast<float>(N) * (p[IX(i, j+1)] - p[IX(i, j-1)]);
-    // END_FOR
-    // set_bnd(1, u);
-    // set_bnd(2, v);
+    FOR_EACH_CELL
+        u[IX(i, j)] -= 0.5f * static_cast<float>(N) * (p[IX(i+1, j)] - p[IX(i-1, j)]);
+        v[IX(i, j)] -= 0.5f * static_cast<float>(N) * (p[IX(i, j+1)] - p[IX(i, j-1)]);
+    END_FOR
+    set_bnd(1, u);
+    set_bnd(2, v);
 }
 
 void original_fluid_solver::advect(int b, float* d, const float* d0, const float* u, const float* v) const

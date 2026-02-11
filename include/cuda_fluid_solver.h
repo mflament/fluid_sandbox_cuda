@@ -58,6 +58,8 @@ public:
 
     void initialize(GLuint den_texture, GLuint u_texture, GLuint v_texture) override;
 
+    void clear() const override;
+
     void add_density(int2 grid_pos, float density) override;
 
     void add_velocity(int2 grid_pos, float2 velocity) override;

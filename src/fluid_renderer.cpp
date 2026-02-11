@@ -88,6 +88,18 @@ void fluid_renderer::handle_key_event(GLFWwindow* window, int key, int scancode,
         render_velocity_ = !render_velocity_;
         update_title(window);
     }
+    if (key == GLFW_KEY_C && action == GLFW_PRESS)
+    {
+        solver_->clear();
+        if (render_velocity_)
+        {
+            solver_->update_velocity_textures(u_texture_, v_texture_);
+        }
+        else
+        {
+            solver_->update_density_texture(dens_texture_);
+        }
+    }
     base_renderer::handle_key_event(window, key, scancode, action, mods);
 }
 
@@ -105,7 +117,7 @@ bool fluid_renderer::is_mouse_button_pressed(int button) const
 bool fluid_renderer::is_in_client_area(const double2 pos) const
 {
     const auto fbs = framebuffer_size();
-    return pos.x  >= 0 && pos.x < fbs.x && pos.y >= 0 && pos.y < fbs.y;
+    return pos.x >= 0 && pos.x < fbs.x && pos.y >= 0 && pos.y < fbs.y;
 }
 
 void fluid_renderer::handle_mouse_button_event(GLFWwindow* window, const int button, const int action, const int mods)
