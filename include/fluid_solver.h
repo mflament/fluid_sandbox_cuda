@@ -13,6 +13,8 @@ struct fluid_solver_config final
     float diff = 0;
     float visc = 0;
     float dt = 0.1f;
+
+    static fluid_solver_config load();
 };
 
 class fluid_renderer;
@@ -51,4 +53,6 @@ public:
         return idx(grid_pos.x, grid_pos.y);
     }
 
+    virtual void clear() const = 0;
+    
 };
