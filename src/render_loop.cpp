@@ -9,7 +9,11 @@ void render_loop::start(base_renderer* renderer, const int width, const int heig
 {
     renderer_ = renderer;
     const auto window = create_window(width, height, debug);
-
+    
+    const auto monitor = glfwGetPrimaryMonitor();
+    float2 scale;
+    glfwGetMonitorContentScale(monitor, &scale.x, &scale.y);
+    printf("%f, %f\n", scale.x, scale.y);
     renderer->handle_size_event(window, width, height);
 
     renderer->initialize(window);

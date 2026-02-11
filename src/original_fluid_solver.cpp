@@ -63,12 +63,8 @@ void original_fluid_solver::solve(const render_state& render_state)
     add_source(x_, x0_);
     diffuse(0, x0_, x_, config.diff);
     advect(0, x_, x0_, u_, v_);
-    
+
     clear_sources();
-    const auto size = get_pixel_count() * sizeof(float);
-    memset(x_, 0, size);
-    memset(u_, 0, size);
-    memset(v_, 0, size);
 }
 
 void original_fluid_solver::clear_sources() const

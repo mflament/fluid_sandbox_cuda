@@ -10,10 +10,10 @@
 int main()
 {
     const fluid_solver_config cfg = fluid_solver_config::load();
-    // const auto original_solver = new original_fluid_solver(cfg);
+    const auto original_solver = new original_fluid_solver(cfg);
     // const auto solver = new cuda_fluid_solver(cfg, original_solver);
     const auto solver = new cuda_fluid_solver(cfg);
-    const auto fsr = new fluid_renderer(solver);
+    const auto fsr = new fluid_renderer(original_solver);
     try
     {
         render_loop::start(fsr);
@@ -21,10 +21,10 @@ int main()
     catch (const std::exception& e)
     {
         std::cerr << e.what() << '\n';
-        throw;
+        throw e;
     }
     delete fsr;
-    // delete original_solver;
+    delete original_solver;
     delete solver;
     return 0;
 }
