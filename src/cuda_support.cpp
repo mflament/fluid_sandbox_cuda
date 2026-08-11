@@ -2,6 +2,17 @@
 #include <cstdio>
 #include <stdexcept>
 
+#include <cuda.h>
+#include <cublas_api.h>
+#include <curand.h>
+
+#include <cuda_gl_interop.h>
+
+cudaGraphicsGLRegisterImage();
+
+void testFunction(int (*callback)(int a, void*)) {
+    callback(1, nullptr);
+}
 
 void cuda_check(cudaError error, const char *operation)
 {

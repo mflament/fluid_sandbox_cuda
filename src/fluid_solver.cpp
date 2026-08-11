@@ -13,7 +13,7 @@ void fluid_solver::update_velocity_textures(GLuint uTexture, GLuint vTexture)
 
 int fluid_solver::get_pixel_count() const
 {
-    const int g = config.n + 2;
+    const int g = config_.n + 2;
     return g * g;
 }
 

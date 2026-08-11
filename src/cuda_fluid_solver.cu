@@ -9,10 +9,12 @@
 #include <fstream>
 
 #include "cuda_support.h"
+#include <nvrtc.h>
 
 #pragma region CUDA Kernels declarations
-
 static __device__ __constant__ int N = 0;
+
+#define IX(i,j) ((i)+(N+2)*(j))
 
 static __global__ void update_texture_kernel(cudaSurfaceObject_t dst, const float* src);
 
@@ -21,13 +23,11 @@ static __global__ void add_input_kernel(float* dst, int index, float input);
 static __global__ void add_source_kernel(float* x, const float* x0, float dt);
 
 static __global__ void lin_solve_kernel(float* x, const float* x0, float a, float c, int color);
-static __global__ void lin_solve_kernel(float* x, const float* x0, float a, float c);
 
 static __global__ void set_bnd_kernel(int b, float* x);
 
 static __global__ void init_div_kernel(float* div, const float* u, const float* v);
-static __global__ void init_p_kernel(float* p);
-static __global__ void project_kernel(float* u, float* v, const float* p);
+static __global__ void project_kernel(float* x, const float* p, int dx, int dy);
 static __global__ void advect_kernel(float* d, const float* d0, const float* u, const float* v, float dt0);
 
 #pragma endregion
@@ -58,17 +58,20 @@ cuda_fluid_solver::cuda_fluid_solver(const fluid_solver_config& cfg,
     v_ = cuda_allocate(count);
     v0_ = cuda_allocate(count);
 
-    full_block_size_ = {8, 8, 1};
-    const auto n = config.n;
-    full_grid_size_ = {ceil_div(n + 2, full_block_size_.x), ceil_div(n + 2, full_block_size_.y), 1};
+    const auto n = config_.n;
+    add_source_block_size_ = dim3(256, 1, 1);
+    add_source_grid_size_ = dim3(ceil_div((n + 2) * (n + 2), add_source_block_size_.x), 1, 1);
 
-    view_block_size_ = full_block_size_;
-    view_grid_size_ = {ceil_div(n, view_block_size_.x), ceil_div(n, view_block_size_.y), 1};
+    view_block_size_ = dim3(6, 16, 1);
+    view_grid_size_ = ceil_div(dim3(n, n, 1), view_block_size_);
 
-    setbnd_block_size_ = {128, 4};
-    setbnd_grid_size_ = {ceil_div(n, setbnd_block_size_.x), 1};
+    setbnd_block_size_ = dim3(64, 4, 1);
+    setbnd_grid_size_ = dim3(ceil_div(n , setbnd_block_size_.x), 1, 1);
 
-    cuda_check(cudaMemcpyToSymbol(N, &config.n, sizeof(int)), "initialize::cudaMemcpyToSymbol(N)");
+    update_texture_block_size_ = dim3(16,16, 1);
+    update_texture_grid_size_ = ceil_div(dim3(n+2, n+2, 1), update_texture_block_size_);
+
+    cuda_check(cudaMemcpyToSymbol(N, &config_.n, sizeof(int)), "initialize::cudaMemcpyToSymbol(N)");
     for (int i = 0; i < 3; ++i)
     {
         cuda_check(cudaStreamCreate(&streams_[i]), "initialize::cudaStreamCreate");
@@ -77,6 +80,9 @@ cuda_fluid_solver::cuda_fluid_solver(const fluid_solver_config& cfg,
 
     if (reference)
         solver_state_ = new float[get_pixel_count()];
+
+    host_x = new float[get_pixel_count()];
+    host_x0 = new float[get_pixel_count()];
 }
 
 cuda_fluid_solver::~cuda_fluid_solver()
@@ -94,7 +100,8 @@ cuda_fluid_solver::~cuda_fluid_solver()
         cuda_check(cudaEventDestroy(uv_events_[i]), "~cuda_fluid_solver::cudaEventDestroy");
     }
 
-    delete []solver_state_;
+    if (reference_)
+        delete []solver_state_;
 
     fluid_solver::~fluid_solver();
 }
@@ -118,11 +125,14 @@ void cuda_fluid_solver::clear() const
     cuda_check(cudaMemset(x_, 0, size), "cudaMemset(x0)");
     cuda_check(cudaMemset(u_, 0, size), "cudaMemset(u0)");
     cuda_check(cudaMemset(v_, 0, size), "cudaMemset(v0)");
+
+    if (reference_)
+        reference_->clear();
 }
 
 void cuda_fluid_solver::add_density(const int2 grid_pos, const float density)
 {
-    add_input_kernel<<<1 , 1, 0, streams_[0]>>>(x0_, idx(grid_pos), density);
+    add_input_kernel<<<1 , 1, 0, streams_[0]>>>(x0_, idx(grid_pos.x, grid_pos.y), density);
     if (reference_)
     {
         reference_->add_density(grid_pos, density);
@@ -167,19 +177,27 @@ void cuda_fluid_solver::solve(const render_state& render_state)
 
         stopped_ |= compare_state("add_source");
 
-        reference_->diffuse(0, reference_->x0(), reference_->x(), config.diff);
-        reference_->diffuse(1, reference_->u0(), reference_->u(), config.visc);
-        reference_->diffuse(2, reference_->v0(), reference_->v(), config.visc);
+        reference_->diffuse(0, reference_->x0(), reference_->x(), config_.diff);
+        reference_->diffuse(1, reference_->u0(), reference_->u(), config_.visc);
+        reference_->diffuse(2, reference_->v0(), reference_->v(), config_.visc);
 
-        diffuse(0, x0_, x_, config.diff);
-        diffuse(1, u0_, u_, config.visc);
-        diffuse(2, v0_, v_, config.visc);
+        diffuse(0, x0_, x_, config_.diff);
+        diffuse(1, u0_, u_, config_.visc);
+        diffuse(2, v0_, v_, config_.visc);
 
         stopped_ |= compare_state("diffuse");
 
-        // reference_->project(reference_->u0(), reference_->v0(), reference_->u(), reference_->v());
-        // project(u0_, v0_, u_, v_);
-        // stopped_ |= compare_state("project");
+        reference_->project(reference_->u0(), reference_->v0(), reference_->u(), reference_->v());
+        project(u0_, v0_, u_, v_);
+        stopped_ |= compare_state("project");
+
+
+        advect(1, u_, u0_, u0_, v0_);
+        advect(2, v_, v0_, u0_, v0_);
+        reference_->advect(1, reference_->u(), reference_->u0(), reference_->u0(), reference_->v0());
+        reference_->advect(2, reference_->v(), reference_->v0(), reference_->u0(), reference_->v0());
+
+        stopped_ |= compare_state("advect");
 
         if (hasInput_ && !stopped_)
         {
@@ -189,21 +207,22 @@ void cuda_fluid_solver::solve(const render_state& render_state)
     else
     {
         add_source(u_, u0_, streams_[1]);
-        diffuse(1, u0_, u_, config.visc);
+        diffuse(1, u0_, u_, config_.visc);
 
         add_source(v_, v0_, streams_[2]);
-        diffuse(2, v0_, v_, config.visc);
+        diffuse(2, v0_, v_, config_.visc);
 
         add_source(x_, x0_, streams_[0]);
-        diffuse(0, x0_, x_, config.diff);
+        
+        diffuse(0, x0_, x_, config_.diff);
 
         project(u0_, v0_, u_, v_);
-
+        
         advect(1, u_, u0_, u0_, v0_);
         advect(2, v_, v0_, u0_, v0_);
-
+        
         project(u_, v_, u0_, v0_);
-
+        
         advect(0, x_, x0_, u_, v_);
 
         cuda_check(cudaStreamSynchronize(streams_[0]), "cudaStreamSynchronize(streams_[0])");
@@ -229,8 +248,8 @@ void cuda_fluid_solver::clear_sources() const
 bool cuda_fluid_solver::compare_state(const char* label) const
 {
     bool error = false;
-    error |= compare_state(label, "dens", reference_->x(), x_, streams_[0]);
-    error |= compare_state(label, "dens0", reference_->x0(), x0_, streams_[0]);
+    error |= compare_state(label, "x", reference_->x(), x_, streams_[0]);
+    error |= compare_state(label, "x0", reference_->x0(), x0_, streams_[0]);
     error |= compare_state(label, "u", reference_->u(), u_, streams_[1]);
     error |= compare_state(label, "u0", reference_->u0(), u0_, streams_[1]);
     error |= compare_state(label, "v", reference_->v(), v_, streams_[2]);
@@ -245,15 +264,17 @@ bool cuda_fluid_solver::compare_state(const char* step, const char* component, c
     cuda_check(cudaStreamSynchronize(stream), "cudaStreamSynchronize");
     const auto count = get_pixel_count();
     cuda_check(cudaMemcpy(solver_state_, actual, count * sizeof(float), cudaMemcpyDeviceToHost), "cudaMemcpy");
-    const auto gs = config.n + 2;
+    const auto gs = config_.n + 2;
     for (int i = 0; i < count; ++i)
     {
-        if (std::abs(expected[i] - solver_state_[i]) > 0.0001f)
+        const auto error = std::abs(expected[i] - solver_state_[i]);
+        if (error > 0.0001f)
         {
             const auto x = i % gs;
             const auto y = i / gs;
-            printf("error in %s(%s) at index %d ([%d,%d]]), expected %f, actual %f\n", step, component, i, x, y,
-                   expected[i], solver_state_[i]);
+            printf("error in %s(%s) at index %d ([%d,%d]]), expected %f, actual %f error %f\n", step, component, i, x,
+                   y,
+                   expected[i], solver_state_[i], error);
             return true;
         }
     }
@@ -262,7 +283,7 @@ bool cuda_fluid_solver::compare_state(const char* step, const char* component, c
 
 void cuda_fluid_solver::add_source(float* x, const float* s, cudaStream_t stream) const
 {
-    add_source_kernel<<< full_grid_size_, full_block_size_, 0, stream >>>(x, s, config.dt);
+    add_source_kernel<<< add_source_grid_size_, add_source_block_size_, 0, stream >>>(x, s, config_.dt);
 }
 
 void cuda_fluid_solver::set_bnd(const int b, float* x, cudaStream_t stream) const
@@ -270,42 +291,48 @@ void cuda_fluid_solver::set_bnd(const int b, float* x, cudaStream_t stream) cons
     set_bnd_kernel<<< setbnd_grid_size_, setbnd_block_size_, 0, stream>>>(b, x);
 }
 
+void cuda_fluid_solver::diffuse(const int b, float* x, const float* x0, const float diff) const
+{
+    const auto a = config_.dt * diff * static_cast<float>(config_.n * config_.n);
+    lin_solve(b, x, x0, a, 1 + 4 * a, streams_[b]);
+}
+
 void cuda_fluid_solver::lin_solve(const int b, float* x, const float* x0, const float a, const float c,
                                   cudaStream_t stream) const
 {
-    for (int k = 0; k < config.k * 2; ++k)
+    for (int k = 0; k < config_.k * 2; ++k)
     {
-        // lin_solve_kernel<<< view_grid_size_, view_block_size_, 0, stream >>>(x, x0, a, c);
         lin_solve_kernel<<< view_grid_size_, view_block_size_, 0, stream >>>(x, x0, a, c, 0);
         lin_solve_kernel<<< view_grid_size_, view_block_size_, 0, stream >>>(x, x0, a, c, 1);
         set_bnd(b, x, stream);
     }
 }
 
-void cuda_fluid_solver::diffuse(const int b, float* x, const float* x0, const float diff) const
-{
-    const auto a = config.dt * diff * static_cast<float>(config.n * config.n);
-    lin_solve(b, x, x0, a, 1 + 4 * a, streams_[b]);
-}
-
 void cuda_fluid_solver::project(float* u, float* v, float* p, float* div) const
 {
-    init_p_kernel<<< view_grid_size_, view_block_size_, 0, streams_[1] >>>(p);
-    set_bnd(0, p, streams_[1]);
-    wait_event(1, 2);
-
-    init_div_kernel<<< view_grid_size_, view_block_size_, 0, streams_[2] >>>(div, u, v);
-    set_bnd(0, div, streams_[2]);
+    cudaMemsetAsync(p, 0, 0, streams_[2]);
     send_event(2);
+    // init_p_kernel<<< view_grid_size_, view_block_size_, 0, streams_[1] >>>(p);
+    // set_bnd(0, p, streams_[1]);
 
+    init_div_kernel<<< view_grid_size_, view_block_size_, 0, streams_[1] >>>(div, u, v);
+    set_bnd(0, div, streams_[1]);
+
+    wait_event(1, 2);
     lin_solve(0, p, div, 1, 4, streams_[1]);
-
-    project_kernel<<< view_grid_size_, view_block_size_, 0 , streams_[1]>>>(u, v, p);
     send_event(1);
 
+    project_kernel<<< view_grid_size_, view_block_size_, 0 , streams_[1]>>>(u, p, 1, 0);
+    send_event(1);
+
+    wait_event(2, 1); // wait lin_solve on stream 1
+    project_kernel<<< view_grid_size_, view_block_size_, 0 , streams_[2]>>>(v, p, 0, 1);
+    send_event(2);
+
+    wait_event(1, 2); // wait project_kernel on stream 2 (v)
     set_bnd(1, u, streams_[1]);
 
-    wait_event(2, 1); // wait for project_kernel running on stream 1
+    wait_event(2, 1); // wait project_kernel on stream 1 (u)
     set_bnd(2, v, streams_[2]);
 
     send_event(1);
@@ -324,11 +351,17 @@ void cuda_fluid_solver::advect(const int b, float* d, const float* d0, const flo
     else
         wait_event(2, 1);
 
-    const auto dt0 = config.dt * static_cast<float>(config.n);
+    const auto dt0 = config_.dt * static_cast<float>(config_.n);
     advect_kernel<<< view_grid_size_, view_block_size_, 0 , streams_[b] >>>(d, d0, u, v, dt0);
 
     set_bnd(b, d, streams_[b]);
     send_event(b);
+}
+
+void cuda_fluid_solver::test_advect(float* d, const float* d0, const float* u, const float* v) const
+{
+    const auto dt0 = config_.dt * static_cast<float>(config_.n);
+    advect_kernel<<< view_grid_size_, view_block_size_, 0 >>>(d, d0, u, v, dt0);
 }
 
 void cuda_fluid_solver::update_density_texture(const GLuint texture)
@@ -361,7 +394,7 @@ void cuda_fluid_solver::update_cuda_texture(cudaGraphicsResource_t cuda_texture,
     cudaResourceDesc desc{.resType = cudaResourceTypeArray, .res = {{array}}, .flags = 0};
     cudaSurfaceObject_t surface;
     cuda_check(cudaCreateSurfaceObject(&surface, &desc), "cudaCreateSurfaceObject");
-    update_texture_kernel<<< full_grid_size_, full_block_size_ >>>(surface, src);
+    update_texture_kernel<<< update_texture_grid_size_, update_texture_block_size_ >>>(surface, src);
     cuda_check(cudaGetLastError(), "launch update_texture_kernel");
     cuda_check(cudaDeviceSynchronize(), "update_texture_kernel");
     cuda_check(cudaDestroySurfaceObject(surface), "cudaDestroySurfaceObject");
@@ -384,36 +417,14 @@ void cuda_fluid_solver::send_event(const int stream) const
 ////////////////////////////////// CUDA Kernels ////////////////////////////////
 #pragma region CUDA Kernels
 
-static __device__ int2 get_grid_pos(const int offset = 0)
+static __device__ int grid_x()
 {
-    const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
-    const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
-    return {x + offset, y + offset};
+    return static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
 }
 
-static __device__ int2 get_view_pos()
+static __device__ int grid_y()
 {
-    return get_grid_pos(1);
-}
-
-static __device__ bool is_in_grid(const int2 pos)
-{
-    return pos.x < N + 2 && pos.y < N + 2;
-}
-
-static __device__ bool is_in_view(const int2 pos)
-{
-    return pos.x > 0 && pos.x <= N && pos.y > 0 && pos.y <= N;
-}
-
-static __device__ int idx(const int2 pos)
-{
-    return pos.y * (N + 2) + pos.x;
-}
-
-static __device__ int idx(const int x, const int y)
-{
-    return y * (N + 2) + x;
+    return static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
 }
 
 // 1 cell kernel
@@ -422,49 +433,25 @@ static __global__ void add_input_kernel(float* dst, const int index, const float
     dst[index] += input;
 }
 
-// full grid size
+// 1D grid length
 static __global__ void add_source_kernel(float* x, const float* x0, const float dt)
 {
-    const auto gp = get_grid_pos();
-    if (is_in_grid(gp))
-    {
-        const auto i = idx(gp);
+    const int i = grid_x();
+    if (i < (N + 2) * (N + 2))
         x[i] += x0[i] * dt;
-    }
 }
 
-// view kernel
+// 2D ceil(N,2)+1 x N
 static __global__ void lin_solve_kernel(float* x, const float* x0, const float a, const float c, const int color)
 {
-    const auto gp = get_view_pos();
-    if (is_in_view(gp) && (gp.x + gp.y) % 2 == color)
+    const auto j = grid_y() + 1;
+    const auto i = grid_x() * 2 + 1 + j % 2 - color;
+    if (i > 0 && i <= N && j <= N)
     {
-        const auto i = idx(gp);
-        x[i] = (x0[i] + a * (x[idx(gp.x - 1, gp.y)] + x[idx(gp.x + 1, gp.y)]
-            + x[idx(gp.x, gp.y - 1)] + x[idx(gp.x, gp.y + 1)])) / c;
+        x[IX(i, j)] = (x0[IX(i, j)] + a * (x[IX(i - 1, j)] + x[IX(i + 1, j)]
+            + x[IX(i, j - 1)] + x[IX(i, j + 1)])) / c;
     }
 }
-
-static __global__ void lin_solve_kernel(float* x, const float* x0, const float a, const float c)
-{
-    const auto gp = get_grid_pos(1);
-    if (is_in_grid(gp))
-    {
-        const auto i = idx(gp);
-        if ((gp.x + gp.y) % 2 == 0)
-        {
-            x[i] = (x0[i] + a * (x[idx(gp.x - 1, gp.y)] + x[idx(gp.x + 1, gp.y)]
-                + x[idx(gp.x, gp.y - 1)] + x[idx(gp.x, gp.y + 1)])) / c;
-        }
-        __syncthreads();
-        if ((gp.x + gp.y) % 2 != 0)
-        {
-            x[i] = (x0[i] + a * (x[idx(gp.x - 1, gp.y)] + x[idx(gp.x + 1, gp.y)]
-                + x[idx(gp.x, gp.y - 1)] + x[idx(gp.x, gp.y + 1)])) / c;
-        }
-    }
-}
-
 
 enum side_t // NOLINT(performance-enum-size)
 {
@@ -474,92 +461,82 @@ enum side_t // NOLINT(performance-enum-size)
     bottom = 3
 };
 
-
-static __device__ int get_bnd_dst_idx(const side_t side, const int n)
-{
-    switch (side)
-    {
-    case left: return idx(0, n);
-    case top: return idx(n, 0);
-    case right: return idx(N + 1, n);
-    case bottom: return idx(n, N + 1);
-    }
-    return -1;
-}
-
-static __device__ float get_bnd_src_value(const int b, const float* x, const side_t side, const int n)
-{
-    switch (side)
-    {
-    case left: return b == 1 ? -x[idx(1, n)] : x[idx(1, n)];
-    case top: return b == 2 ? -x[idx(n, 1)] : x[idx(n, 1)];
-    case right: return b == 1 ? -x[idx(N, n)] : x[idx(N, n)];
-    case bottom: return b == 2 ? -x[idx(n, N)] : x[idx(n, N)];
-    }
-    return 0;
-}
-
-// grid size = N x 4 : N threads per side (0 left 1 top 2 right 3 bottom) 
+// 2D N x 4 : N threads per side (0 left 1 top 2 right 3 bottom) 
 static __global__ void set_bnd_kernel(const int b, float* x)
 {
-    const auto gp = get_grid_pos();
-    if (gp.x >= N)
+    const auto i = grid_x() + 1;
+    if (i > N)
         return;
 
-    const auto side = static_cast<side_t>(gp.y);
-    const auto dst_idx = get_bnd_dst_idx(side, 1 + gp.x);
-    const float n = get_bnd_src_value(b, x, side, 1 + gp.x);
-    x[dst_idx] = n;
+    const auto side = static_cast<side_t>(grid_y());
 
-    // corners
-    if (gp.x == 0 && side == left) // top left, n is (0, 1) , fetch (1, 0)
+    if (side == left)
     {
-        x[idx(0, 0)] = 0.5f * (n + get_bnd_src_value(b, x, top, 1));
+        float v = x[IX(1, i)];
+        x[IX(0, i)] = b == 1 ? -v : v;
+        if (i == 1)
+        {
+            // bottom left corner
+            float v2 = b == 2 ? -v : v;
+            x[IX(0, 0)] = 0.5f * (v + v2);
+        }
     }
-    else if (gp.x == N - 1 && side == top) // top right, n is (N, 0) , fetch (N+1, 1)
+    else if (side == right)
     {
-        x[idx(N + 1, 0)] = 0.5f * (n + get_bnd_src_value(b, x, right, 1));
+        float v = x[IX(N, i)];
+        x[IX(N+1, i)] = b == 1 ? -v : v;
+        if (i == N)
+        {
+            // top right corner
+            float v2 = b == 2 ? -v : v;
+            x[IX(N+1, N+1)] = 0.5f * (v + v2);
+        }
     }
-    else if (gp.x == N - 1 && side == right) // bottom right, n is (N+1, N) , fetch (N, N+1)
+    else if (side == bottom)
     {
-        x[idx(N + 1, N + 1)] = 0.5f * (n + get_bnd_src_value(b, x, bottom, N));
+        float v = x[IX(i, 1)];
+        x[IX(i, 0)] = b == 2 ? -v : v;
+        if (i == N)
+        {
+            // bottom right corner
+            float v2 = b == 1 ? -v : v;
+            x[IX(N+1, 0)] = 0.5f * (v + v2);
+        }
     }
-    else if (gp.x == 0 && side == bottom) // bottom left, n is (1, N+1) , fetch (0, N)
+    else if (side == top)
     {
-        x[idx(0, N + 1)] = 0.5f * (n + get_bnd_src_value(b, x, left, N));
+        float v = x[IX(i, N)];
+        x[IX(i, N+1)] = b == 2 ? -v : v;
+        if (i == 1)
+        {
+            // top left corner
+            float v2 = b == 1 ? -v : v;
+            x[IX(0, N+1)] = 0.5f * (v + v2);
+        }
     }
 }
 
 // view kernel
 static __global__ void init_div_kernel(float* div, const float* u, const float* v)
 {
-    const auto vp = get_view_pos();
-    if (is_in_view(vp))
+    const auto i = grid_x() + 1;
+    const auto j = grid_y() + 1;
+    if (i <= N && j <= N)
     {
-        div[idx(vp)] = -0.5f * (u[idx(vp.x + 1, vp.y)] - u[idx(vp.x - 1, vp.y)] +
-            v[idx(vp.x, vp.y + 1)] - v[idx(vp.x, vp.y - 1)]) / static_cast<float>(N);
+        div[IX(i, j)] = -0.5f * (u[IX(i + 1, j)] - u[IX(i - 1, j)] + v[IX(i, j + 1)] - v[IX(i, j - 1)]) / static_cast<
+            float>(N);
     }
 }
 
-// view kernel
-static __global__ void init_p_kernel(float* p)
-{
-    const auto vp = get_view_pos();
-    if (is_in_view(vp))
-    {
-        p[idx(vp)] = 0;
-    }
-}
 
 // view kernel
-static __global__ void project_kernel(float* u, float* v, const float* p)
+static __global__ void project_kernel(float* x, const float* p, int dx, int dy)
 {
-    const auto vp = get_view_pos();
-    if (is_in_view(vp))
+    const auto i = grid_x() + 1;
+    const auto j = grid_y() + 1;
+    if (i <= N && j <= N)
     {
-        const auto i = idx(vp);
-        u[i] -= 0.5f * static_cast<float>(N) * (p[idx(vp.x + 1, vp.y)] - p[idx(vp.x - 1, vp.y)]);
-        v[i] -= 0.5f * static_cast<float>(N) * (p[idx(vp.x, vp.y + 1)] - p[idx(vp.x, vp.y - 1)]);
+        x[IX(i, j)] -= 0.5f * static_cast<float>(N) * (p[IX(i + dx, j + dy)] - p[IX(i - dx, j - dy)]);
     }
 }
 
@@ -572,34 +549,30 @@ static __device__ T clamp(const T v, const T min, const T max)
 // view kernel
 static __global__ void advect_kernel(float* d, const float* d0, const float* u, const float* v, const float dt0)
 {
-    const auto vp = get_view_pos();
-
-    if (is_in_view(vp))
+    const auto i = grid_x() + 1;
+    const auto j = grid_y() + 1;
+    if (i <= N && j <= N)
     {
-        const auto i = idx(vp);
-        float x = static_cast<float>(vp.x) - dt0 * u[i];
-        float y = static_cast<float>(vp.y) - dt0 * v[i];
+        float x = static_cast<float>(i) - dt0 * u[i];
+        float y = static_cast<float>(j) - dt0 * v[j];
         x = clamp(x, 0.5f, static_cast<float>(N) + 0.5f);
-        const int i0 = static_cast<int>(x);
-        const int i1 = i0 + 1;
         y = clamp(y, 0.5f, static_cast<float>(N) + 0.5f);
-        const int j0 = static_cast<int>(y);
-        const int j1 = j0 + 1;
-        const float s1 = x - static_cast<float>(i0);
-        const float s0 = 1 - s1;
-        const float t1 = y - static_cast<float>(j0);
-        const float t0 = 1 - t1;
-        d[i] = s0 * (t0 * d0[idx(i0, j0)] + t1 * d0[idx(i0, j1)]) + s1 * (t0 * d0[idx(i1, j0)] + t1 * d0[idx(i1, j1)]);
+        const int i0 = static_cast<int>(x), i1 = i0 + 1;
+        const int j0 = static_cast<int>(y), j1 = j0 + 1;
+        const float s1 = x - static_cast<float>(i0), s0 = 1 - s1;
+        const float t1 = y - static_cast<float>(j0), t0 = 1 - t1;
+        d[i] = s0 * (t0 * d0[IX(i0, j0)] + t1 * d0[IX(i0, j1)]) + s1 * (t0 * d0[IX(i1, j0)] + t1 * d0[IX(i1, j1)]);
     }
 }
 
 // full grid kernel
 static __global__ void update_texture_kernel(cudaSurfaceObject_t dst, const float* src)
 {
-    const auto gp = get_grid_pos();
-    if (is_in_grid(gp))
+    const auto x = grid_x();
+    const auto y = grid_y();
+    if (x < N + 2 && y < N + 2)
     {
-        surf2Dwrite(src[idx(gp)], dst, gp.x * static_cast<int>(sizeof(float)), gp.y, cudaBoundaryModeClamp);
+        surf2Dwrite(src[IX(x, y)], dst, x * static_cast<int>(sizeof(float)), y, cudaBoundaryModeClamp);
     }
 }
 

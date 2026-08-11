@@ -1,21 +1,24 @@
 #include "fluid_renderer.h"
 
 #include <cstdio>
+#include <stdexcept>
 
 #include "gl_support.h"
+#include "original_fluid_solver.h"
 #include "shaders.h"
 #include "vector_operators.h"
 
+
 fluid_renderer::fluid_renderer(fluid_solver* solver) : solver_(solver)
 {
-    render_velocity_ = true;
+    render_velocity_ = false;
 }
 
 fluid_renderer::~fluid_renderer()
 {
     glDeleteProgram(render_density_program_.program);
     glDeleteProgram(render_velocity_program_.program);
-
+    
     glDeleteSamplers(1, &linear_sampler_);
 
     const GLuint textures[]{dens_texture_, u_texture_, v_texture_};
@@ -51,7 +54,7 @@ int2 fluid_renderer::grid_position(const double2& mouse_position) const
 
 fluid_solver_config fluid_renderer::get_config() const
 {
-    return solver_->config;
+    return solver_->config();
 }
 
 void fluid_renderer::render(GLFWwindow* window, const render_state& render_state)
@@ -90,7 +93,7 @@ void fluid_renderer::handle_key_event(GLFWwindow* window, int key, int scancode,
     }
     if (key == GLFW_KEY_C && action == GLFW_PRESS)
     {
-        solver_->clear();
+         solver_->clear();
         if (render_velocity_)
         {
             solver_->update_velocity_textures(u_texture_, v_texture_);
@@ -176,7 +179,7 @@ render_density_program fluid_renderer::create_render_density_program() const
     };
     glUseProgram(rp.program);
     glUniform1i(rp.u_texture, 0);
-    glUniform1i(rp.size, solver_->config.n);
+    glUniform1i(rp.size, solver_->config().n);
     glUseProgram(0);
     return rp;
 }
@@ -193,7 +196,7 @@ render_velocity_program fluid_renderer::create_render_velocity_program() const
     glUseProgram(rp.program);
     glUniform1i(rp.u_texture, 0);
     glUniform1i(rp.v_texture, 1);
-    glUniform1i(rp.size, solver_->config.n);
+    glUniform1i(rp.size, solver_->config().n);
     glUseProgram(0);
     return rp;
 }
@@ -201,7 +204,8 @@ render_velocity_program fluid_renderer::create_render_velocity_program() const
 void fluid_renderer::update_title(GLFWwindow* window) const
 {
     char title[64];
-    (void)sprintf_s(title, 64, "fluid sandbox (%s)", render_velocity_ ? "velocity" : "density");
+    if (sprintf_s(title, 64, "fluid sandbox (solver=%s) (render=%s)", solver_->solver_name(), render_velocity_ ? "velocity" : "density") < 0)
+        throw std::runtime_error("fluid_sandbox::update_title(): sprintf failed");
     glfwSetWindowTitle(window, title);
 }
 
@@ -217,7 +221,7 @@ GLuint fluid_renderer::setup_data_texture(GLuint texture) const
 {
     glBindTexture(GL_TEXTURE_2D, texture);
     set_texture_sampler_params();
-    const auto n = solver_->config.n + 2;
+    const auto n = solver_->config().n + 2;
     glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, n, n, 0, GL_RED, GL_FLOAT, nullptr);
     return texture;
 }

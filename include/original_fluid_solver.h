@@ -4,6 +4,9 @@
 
 class original_fluid_solver final : public fluid_solver
 {
+    
+    static constexpr auto name = "original";
+
     float *x_, *x0_;
 
     float *u_, *u0_;
@@ -13,6 +16,8 @@ public:
     explicit original_fluid_solver(const fluid_solver_config& cfg = {});
 
     ~original_fluid_solver() override;
+
+    const char* solver_name() override { return name; }
 
     void clear() const override;
     
@@ -32,7 +37,6 @@ public:
     [[nodiscard]] float* u0() const { return u0_; }
     [[nodiscard]] float* v() const { return v_; }
     [[nodiscard]] float* v0() const { return v0_; }
-
 
     void add_source(float* x, const float* s) const;
     void set_bnd(int b, float* x) const;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <span>
+
 #include "render_loop.h"
 #include "fluid_solver.h"
 
@@ -20,6 +22,8 @@ struct render_velocity_program
 
 class fluid_renderer final : public base_renderer // NOLINT(cppcoreguidelines-special-member-functions)
 {
+    fluid_solver* solver_{};
+
     GLuint vao_{};
     GLuint u_texture_{};
     GLuint v_texture_{};
@@ -35,16 +39,14 @@ class fluid_renderer final : public base_renderer // NOLINT(cppcoreguidelines-sp
     int mouse_pressed_buttons_{};
     bool cursor_hover_{}, dragging_{};
 
-    fluid_solver* solver_{};
-
     bool render_velocity_{};
 
-    render_density_program create_render_density_program() const;
-    render_velocity_program create_render_velocity_program() const;
+    [[nodiscard]] render_density_program create_render_density_program() const;
+    [[nodiscard]] render_velocity_program create_render_velocity_program() const;
 
     void create_data_textures();
 
-    GLuint setup_data_texture(GLuint texture) const;
+    [[nodiscard]] GLuint setup_data_texture(GLuint texture) const;
 
     void create_vao();
     
@@ -60,7 +62,7 @@ class fluid_renderer final : public base_renderer // NOLINT(cppcoreguidelines-sp
 
 public:
     explicit fluid_renderer(fluid_solver* solver);
-
+    
     ~fluid_renderer() override;
 
     void initialize(GLFWwindow* window) override;

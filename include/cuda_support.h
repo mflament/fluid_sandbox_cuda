@@ -1,12 +1,17 @@
 ﻿#pragma once
 
-#include "cuda_runtime.h"
-
+#include <cuda_runtime.h>
+cudaError_enum e;
 void cuda_check(cudaError error, const char* operation);
 
 inline unsigned ceil_div(unsigned int a, unsigned int b)
 {
     return (a + b - 1) / b;
+}
+
+inline dim3 ceil_div(const dim3 a, const dim3 b)
+{
+    return {ceil_div(a.x, b.x), ceil_div(a.y, b.y), ceil_div(a.z, b.z)};
 }
 
 // only to avoid syntax error on CUDA C++ syntax and types if not compiling  with NVCC

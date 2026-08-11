@@ -108,6 +108,12 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     CUDA_ARCHITECTURES native
 )
 
+target_compile_options(${PROJECT_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
+                       --generate-line-info
+                       --relocatable-device-code=true
+                       --fmad=false
+                       >)
+
 # --------------------------------------------------
 # Platform-specific system libs (required for static GLFW)
 # --------------------------------------------------

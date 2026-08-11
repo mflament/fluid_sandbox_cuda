@@ -4,26 +4,32 @@
 
 #include "original_fluid_solver.h"
 
-
 class cuda_fluid_solver : public fluid_solver
 {
+    static constexpr auto name = "CUDA";
+    
     float *x_, *x0_;
 
     float *u_, *u0_;
     float *v_, *v0_;
 
+    float *host_x, *host_x0;  
+
     cudaGraphicsResource_t cuda_dens_texture_{};
     cudaGraphicsResource_t cuda_u_texture_{};
     cudaGraphicsResource_t cuda_v_texture_{};
-
-    dim3 full_grid_size_{};
-    dim3 full_block_size_{};
 
     dim3 view_grid_size_{};
     dim3 view_block_size_{};
 
     dim3 setbnd_grid_size_{};
     dim3 setbnd_block_size_{};
+
+    dim3 add_source_grid_size_{};
+    dim3 add_source_block_size_{};
+
+    dim3 update_texture_grid_size_{};
+    dim3 update_texture_block_size_{};
 
     cudaStream_t streams_[3]{};
     cudaEvent_t uv_events_[3]{};
@@ -53,8 +59,19 @@ class cuda_fluid_solver : public fluid_solver
     void clear_sources() const;
     
 public:
+    
+    [[nodiscard]] float* x() const { return x_; }
+    [[nodiscard]] float* x0() const { return x0_; }
+    [[nodiscard]] float* u() const { return u_; }
+    [[nodiscard]] float* u0() const { return u0_; }
+    [[nodiscard]] float* v() const { return v_; }
+    [[nodiscard]] float* v0() const { return v0_; }
+
+
     explicit cuda_fluid_solver(const fluid_solver_config& cfg = {}, original_fluid_solver* reference = nullptr);
     ~cuda_fluid_solver() override;
+
+    const char* solver_name() override { return name; }
 
     void initialize(GLuint den_texture, GLuint u_texture, GLuint v_texture) override;
 
@@ -69,4 +86,8 @@ public:
     void update_velocity_textures(GLuint u_texture, GLuint v_texture) override;
 
     void update_density_texture(GLuint texture) override;
+    
+    void test_advect(float* d, const float* d0, const float* u, const float* v) const;
+
+
 };
